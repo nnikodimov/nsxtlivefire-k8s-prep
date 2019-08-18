@@ -1,0 +1,108 @@
+#
+- hosts: 127.0.0.1
+  connection: local
+  become: yes
+  vars_files:
+    - livefire_k8s_vars.yml
+    - policy_api_k8s_vars.yml
+  tasks:
+    - name: Create IP Blocks for Kubernetes Pods
+      nsxt_ip_blocks:
+        hostname: "{{ nsx_node1.mgmt_ip }}"
+        username: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        validate_certs: "{{ validate_certs }}"
+        display_name: "{{ item.display_name }}"
+        cidr: "{{ item.cidr }}"
+        state: "{{ state }}"
+      with_items:
+        - "{{ ip_blocks }}"
+
+    - name: Create IP Pools
+      nsxt_ip_pools:
+        hostname: "{{ nsx_node1.mgmt_ip }}"
+        username: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        validate_certs: "{{ validate_certs }}"
+        display_name: "{{ item.display_name }}"
+        subnets: "{{ item.subnets }}"
+        state: "{{ state }}"
+      with_items:
+        - "{{ ip_pools }}"
+
+    - name: Edit Gateways (Routers)at Site A Redistribution
+      uri:
+        method: PATCH
+        url: "https://{{ nsx_node1.hostname }}/policy/api/v1/infra/"
+        user: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        body: "{{sitea_gateways}}"
+        body_format: json
+        force_basic_auth: yes
+        validate_certs: no
+        status_code: 200
+    
+    - name: Configure Bottom Firewall Marker Section
+      uri:
+        method: POST
+        url: https://{{ nsx_node1.hostname }}/api/v1/firewall/sections
+        user: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        body:
+          display_name: tenant1-k8s_bottom_firewall_section
+          section_type : LAYER3
+          stateful : true
+        body_format: json
+        force_basic_auth: yes
+        validate_certs: no
+        status_code: 201
+
+    - name: Configure Top Firewall Marker Section
+      uri:
+        method: POST
+        url: https://{{ nsx_node1.hostname }}/api/v1/firewall/sections
+        user: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        body:
+          display_name: tenant1-k8s_top_firewall_section
+          section_type : LAYER3
+          stateful : true
+        body_format: json
+        force_basic_auth: yes
+        validate_certs: no
+        status_code: 201
+
+    - name: "Create Overlay Logical Switch for K8s Node VIF"
+      nsxt_logical_switches:
+        hostname: "{{ nsx_node1.mgmt_ip }}"
+        username: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        validate_certs: "{{ validate_certs }}"
+        display_name: "{{ item.display_name }}"
+        replication_mode: SOURCE
+        admin_state: UP
+        transport_zone_name: "{{ item.transport_zone_name }}"
+        state: "{{ state }}"
+      with_items:
+        - "{{ logical_switches }}"
+
+    - name: Connect Kubernetes Nodes to the Overlay Logical Switch
+      command: sudo pwsh ./k8s-nodes-vif-attachment.ps1
+
+    - name: Collect Logical Ports information
+      uri:
+        method: GET
+        url: "https://{{ nsx_node1.hostname }}/api/v1/logical-ports"
+        user: "{{ nsx_username }}"
+        password: "{{ nsx_password }}"
+        force_basic_auth: yes
+        validate_certs: no
+        body_format: json
+      register: logical_ports
+    - debug:
+        var: logical_ports
+
+    - name: Get K8s Nodes UUID
+      with_sequence: count = logical_ports.result_count
+      when: logical_ports.json_results[i].display_name == "k8s-*"
+
