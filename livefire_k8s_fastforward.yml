@@ -90,11 +90,6 @@
     - name: Connect Kubernetes Nodes to the Overlay Logical Switch
       command: sudo pwsh ./k8s-nodes-vif-attachment.ps1
 
-    - name: Update repositories cache and install python-jmespath package
-      apt:
-        name: python-jmespath
-        update_cache: yes
-
     - name: Collect Logical Ports information
       uri:
         method: GET
